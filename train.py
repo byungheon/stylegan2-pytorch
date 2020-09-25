@@ -18,6 +18,8 @@ try:
 except ImportError:
     wandb = None
 
+from torch.utils.tensorboard import SummaryWriter
+
 from model import Generator, Discriminator
 from dataset import MultiResolutionDataset
 from distributed import (
@@ -28,7 +30,6 @@ from distributed import (
     get_world_size,
 )
 from non_leaking import augment
-
 
 def data_sampler(dataset, shuffle, distributed):
     if distributed:
@@ -123,6 +124,9 @@ def set_grad_none(model, targets):
 
 def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device):
     loader = sample_data(loader)
+    tboard_logger = SummaryWriter('./tboard/')
+
+    base_folder_path = os.path.dirname(__file__)
 
     pbar = range(args.iter)
 
@@ -308,18 +312,33 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                         "Path Length": path_length_val,
                     }
                 )
+            if args.tensorboard:
+                tboard_logger.add_scalar("Generator", g_loss_val, i)
+                tboard_logger.add_scalar("Discriminator", d_loss_val, i)
+                tboard_logger.add_scalar("Augment", ada_aug_p, i)
+                tboard_logger.add_scalar("Rt", r_t_stat, i)
+                tboard_logger.add_scalar("R1", r1_val, i)
+                tboard_logger.add_scalar("Path Length Regularization", path_loss_val, i)
+                tboard_logger.add_scalar("Mean Path Length", mean_path_length, i)
+                tboard_logger.add_scalar("Real Score", real_score_val, i)
+                tboard_logger.add_scalar("Fake Score", fake_score_val, i)
+                tboard_logger.add_scalar("Path Length", path_length_val, i)
+
 
             if i % 100 == 0:
                 with torch.no_grad():
                     g_ema.eval()
                     sample, _ = g_ema([sample_z])
-                    utils.save_image(
-                        sample,
-                        f"sample/{str(i).zfill(6)}.png",
-                        nrow=int(args.n_sample ** 0.5),
-                        normalize=True,
-                        range=(-1, 1),
-                    )
+                    if not args.tensorboard:
+                        utils.save_image(
+                            sample,
+                            os.path.join(base_folder_path, f"sample/{str(i).zfill(6)}.png"),
+                            nrow=int(args.n_sample ** 0.5),
+                            normalize=True,
+                            range=(-1, 1),
+                        )
+                    else:
+                        tboard_logger.add_images("sampel", sample, global_step = i, dataformats="NCHW")
 
             if i % 10000 == 0:
                 torch.save(
@@ -332,7 +351,7 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                         "args": args,
                         "ada_aug_p": ada_aug_p,
                     },
-                    f"checkpoint/{str(i).zfill(6)}.pt",
+                    os.path.join(base_folder_path, f"checkpoint/{str(i).zfill(6)}.pt"),
                 )
 
 
@@ -402,6 +421,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--wandb", action="store_true", help="use weights and biases logging"
+    )
+    parser.add_argument(
+        "--tensorboard", action="store_true", help="use tensorboard logging for sample image"
     )
     parser.add_argument(
         "--local_rank", type=int, default=0, help="local rank for distributed training"
