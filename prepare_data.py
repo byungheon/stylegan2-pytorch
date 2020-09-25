@@ -41,16 +41,19 @@ def resize_worker(img_file, sizes, resample):
 
 
 def prepare(
-    env, dataset, n_worker, sizes=(128, 256, 512, 1024), resample=Image.LANCZOS
+    env, dataset, n_worker, sizes=(128, 256, 512, 1024), resample=Image.LANCZOS, max_images=-1
 ):
     resize_fn = partial(resize_worker, sizes=sizes, resample=resample)
 
     files = sorted(dataset.imgs, key=lambda x: x[0])
     files = [(i, file) for i, (file, label) in enumerate(files)]
     total = 0
-
+    if max_images < 0:
+        max_images = len(files)
+    
+    print(max_images)
     with multiprocessing.Pool(n_worker) as pool:
-        for i, imgs in tqdm(pool.imap_unordered(resize_fn, files)):
+        for i, imgs in tqdm(pool.imap_unordered(resize_fn, files[:max_images])):
             for size, img in zip(sizes, imgs):
                 key = f"{size}-{str(i).zfill(5)}".encode("utf-8")
 
@@ -79,6 +82,12 @@ if __name__ == "__main__":
         help="number of workers for preparing dataset",
     )
     parser.add_argument(
+        "--n_image",
+        type=int,
+        default=-1,
+        help="max number of images to prepare",
+    )
+    parser.add_argument(
         "--resample",
         type=str,
         default="lanczos",
@@ -98,4 +107,4 @@ if __name__ == "__main__":
     imgset = datasets.ImageFolder(args.path)
 
     with lmdb.open(args.out, map_size=1024 ** 4, readahead=False) as env:
-        prepare(env, imgset, args.n_worker, sizes=sizes, resample=resample)
+        prepare(env, imgset, args.n_worker, sizes=sizes, resample=resample, max_images=args.n_image)
